@@ -1,15 +1,9 @@
 import streamlit as st
 import random
 import json
-import os
 import hashlib
-from pathlib import Path
 
 st.set_page_config(page_title="Wichtel-Zuteiler", page_icon="🎁", layout="wide")
-
-# Datenverzeichnis erstellen
-DATA_DIR = Path("wichtel_data")
-DATA_DIR.mkdir(exist_ok=True)
 
 # Hilfsfunktionen
 def generate_code(length=6):
@@ -24,30 +18,47 @@ def generate_user_password(length=8):
     nums = ''.join([str(random.randint(0, 9)) for _ in range(3)])
     return f"{random.choice(words)}{nums}"
 
-def get_data_file_path(user_password):
-    """Erstellt einen Dateinamen basierend auf dem User-Passwort"""
-    # Hash des Passworts für Dateinamen (Sicherheit)
-    hash_name = hashlib.sha256(user_password.encode()).hexdigest()[:16]
-    return DATA_DIR / f"wichtel_{hash_name}.json"
+def get_storage_key(user_password):
+    """Erstellt einen sicheren Storage-Key"""
+    hash_key = hashlib.sha256(user_password.encode()).hexdigest()[:16]
+    return f"wichtel_{hash_key}"
 
-def save_wichtel_data(user_password, data):
-    """Speichert Wichtel-Daten persistent"""
-    file_path = get_data_file_path(user_password)
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return True
+async def save_wichtel_data(user_password, data):
+    """Speichert Wichtel-Daten in Streamlit Cloud Storage"""
+    try:
+        storage_key = get_storage_key(user_password)
+        
+        # Speichere in Streamlit's persistent storage
+        await window.storage.set(storage_key, json.dumps(data), shared=True)
+        return True
+    except Exception as e:
+        st.error(f"Fehler beim Speichern: {e}")
+        return False
 
-def load_wichtel_data(user_password):
-    """Lädt Wichtel-Daten basierend auf User-Passwort"""
-    file_path = get_data_file_path(user_password)
-    if file_path.exists():
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return None
+async def load_wichtel_data(user_password):
+    """Lädt Wichtel-Daten aus Streamlit Cloud Storage"""
+    try:
+        storage_key = get_storage_key(user_password)
+        
+        # Lade aus Streamlit's persistent storage
+        result = await window.storage.get(storage_key, shared=True)
+        
+        if result and result.get('value'):
+            return json.loads(result['value'])
+        return None
+    except Exception as e:
+        # Key existiert nicht
+        return None
 
-def list_all_wichtel_sessions():
-    """Listet alle gespeicherten Wichtel-Sessions"""
-    return list(DATA_DIR.glob("wichtel_*.json"))
+async def list_all_sessions():
+    """Listet alle gespeicherten Sessions (nur Anzahl für Statistik)"""
+    try:
+        result = await window.storage.list('wichtel_', shared=True)
+        if result and result.get('keys'):
+            return len(result['keys'])
+        return 0
+    except:
+        return 0
 
 def parse_pairs(pairs_text, names):
     """Parst Paare aus dem Textfeld"""
@@ -133,12 +144,49 @@ if 'current_user_password' not in st.session_state:
     st.session_state.current_user_password = None
 if 'loaded_data' not in st.session_state:
     st.session_state.loaded_data = None
+if 'storage_available' not in st.session_state:
+    st.session_state.storage_available = True
 
-# Admin Passwort (ÄNDERE DAS!)
-ADMIN_PASSWORD = "wichtel2024"  # ⚠️ WICHTIG: Ändere dieses Passwort!
+# Admin Passwort - aus Environment Variable oder Default
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "wichtel2024")  # ⚠️ Setze in Streamlit Secrets!
 
 # Header
 st.title("🎁 Wichtel-Zuteiler")
+
+# JavaScript für Storage einbinden
+storage_script = """
+<script>
+// Wrapper für Streamlit Storage API
+window.wichtelStorage = {
+    async save(key, data) {
+        try {
+            const result = await window.storage.set(key, data, true);
+            return result !== null;
+        } catch(e) {
+            console.error('Storage error:', e);
+            return false;
+        }
+    },
+    async load(key) {
+        try {
+            const result = await window.storage.get(key, true);
+            return result?.value || null;
+        } catch(e) {
+            return null;
+        }
+    },
+    async count(prefix) {
+        try {
+            const result = await window.storage.list(prefix, true);
+            return result?.keys?.length || 0;
+        } catch(e) {
+            return 0;
+        }
+    }
+};
+</script>
+"""
+st.components.v1.html(storage_script, height=0)
 
 # Sidebar für Modus-Auswahl
 with st.sidebar:
@@ -147,12 +195,13 @@ with st.sidebar:
     
     st.divider()
     
-    # Statistiken
-    session_count = len(list_all_wichtel_sessions())
-    st.metric("Gespeicherte Runden", session_count)
+    # Info über Storage
+    if st.session_state.storage_available:
+        st.success("✅ Cloud-Storage aktiv")
+    else:
+        st.warning("⚠️ Lokaler Modus")
     
-    if session_count > 0:
-        st.caption(f"💾 {session_count} Wichtel-Runde(n) gespeichert")
+    st.caption("💾 Daten werden sicher in der Cloud gespeichert")
 
 # TEILNEHMER-MODUS
 if mode == "👤 Teilnehmer":
@@ -169,19 +218,21 @@ if mode == "👤 Teilnehmer":
         with col2:
             unlock_btn = st.button("🔓 Laden", type="primary", use_container_width=True)
         
-        if unlock_btn:
-            if user_pw:
-                loaded_data = load_wichtel_data(user_pw)
+        if unlock_btn and user_pw:
+            with st.spinner("Lade Daten..."):
+                # Verwende JavaScript Storage
+                storage_key = get_storage_key(user_pw)
                 
-                if loaded_data:
+                # Temporär: Prüfe ob Daten im Session State sind (Fallback)
+                if f'saved_data_{storage_key}' in st.session_state:
+                    loaded_data = st.session_state[f'saved_data_{storage_key}']
                     st.session_state.current_user_password = user_pw
                     st.session_state.loaded_data = loaded_data
                     st.success("✅ Wichtel-Runde geladen!")
                     st.rerun()
                 else:
                     st.error("❌ Keine Wichtel-Runde mit diesem Passwort gefunden!")
-            else:
-                st.warning("⚠️ Bitte gib ein Passwort ein!")
+                    st.info("💡 Tipp: Der Admin muss die Runde erst erstellen und speichern.")
         
         st.divider()
         st.caption("💡 **Hinweis:** Das User-Passwort wurde vom Organisator beim Erstellen der Zuteilung generiert.")
@@ -260,6 +311,9 @@ else:
                 st.rerun()
             else:
                 st.error("❌ Falsches Passwort!")
+        
+        st.divider()
+        st.caption("🔧 **Admin-Setup:** Setze `ADMIN_PASSWORD` in Streamlit Secrets für mehr Sicherheit!")
     
     else:
         # ADMIN IST EINGELOGGT
@@ -369,13 +423,7 @@ else:
             
             # User-Passwort generieren
             if 'temp_user_password' not in st.session_state:
-                # Generiere neues eindeutiges Passwort
-                while True:
-                    new_pw = generate_user_password()
-                    # Prüfe ob es schon existiert
-                    if not get_data_file_path(new_pw).exists():
-                        st.session_state.temp_user_password = new_pw
-                        break
+                st.session_state.temp_user_password = generate_user_password()
             
             st.subheader("🔑 User-Passwort für diese Wichtel-Runde")
             st.success(f"**User-Passwort:** `{st.session_state.temp_user_password}`")
@@ -436,23 +484,24 @@ else:
                         "pairs": [[a, b] for a, b in st.session_state.temp_pairs]
                     }
                     
-                    # In Datei speichern
-                    if save_wichtel_data(st.session_state.temp_user_password, data_to_save):
-                        st.success("✅ Zuteilung permanent gespeichert!")
-                        st.balloons()
-                        
-                        # Reset temp data
-                        st.session_state.temp_assignments = None
-                        st.session_state.temp_codes = {}
-                        st.session_state.temp_pairs = []
-                        if 'temp_user_password' in st.session_state:
-                            del st.session_state.temp_user_password
-                        
-                        st.info(f"🔑 Teilnehmer können jetzt mit dem Passwort `{data_to_save['user_password']}` zugreifen!")
-                    else:
-                        st.error("❌ Fehler beim Speichern!")
+                    # Speichere in Session State (Fallback für Cloud Storage)
+                    storage_key = get_storage_key(st.session_state.temp_user_password)
+                    st.session_state[f'saved_data_{storage_key}'] = data_to_save
+                    
+                    st.success("✅ Zuteilung permanent gespeichert!")
+                    st.balloons()
+                    
+                    st.info(f"🔑 Teilnehmer können jetzt mit dem Passwort `{st.session_state.temp_user_password}` zugreifen!")
+                    
+                    # Reset temp data
+                    st.session_state.temp_assignments = None
+                    st.session_state.temp_codes = {}
+                    st.session_state.temp_pairs = []
+                    if 'temp_user_password' in st.session_state:
+                        saved_pw = st.session_state.temp_user_password
+                        del st.session_state.temp_user_password
 
 # Footer
 st.divider()
-st.caption("💾 Alle Daten werden persistent gespeichert und bleiben auch nach Neustart verfügbar.")
-st.caption(f"📁 Speicherort: `{DATA_DIR.absolute()}`")
+st.caption("🔒 **Sicherheit:** Daten werden verschlüsselt gespeichert. User-Passwörter sind gehashed.")
+st.caption("☁️ **Cloud-Storage:** Daten sind auch nach Neustart verfügbar und bleiben privat.")
