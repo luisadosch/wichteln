@@ -1,6 +1,7 @@
 import importlib
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,10 @@ import pytest
 def app_module(monkeypatch, tmp_path):
     db_path = tmp_path / "wichteln_test.db"
     monkeypatch.setenv("WICHTEL_DB_PATH", str(db_path))
+
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
     if "wichtel" in sys.modules:
         del sys.modules["wichtel"]

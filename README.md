@@ -6,7 +6,7 @@ Eine Streamlit-App zum Auslosen von Wichtel-Partner:innen – inklusive persiste
 
 - 🚀 **Streamlit-Frontend** für Teilnehmer:innen und Admin.
 - 🗄️ **Persistente Sessions** dank SQLite (Datei: `data/wichteln.db`).
-- 🔑 **Admin-Überblick** über sämtliche gespeicherten Runden direkt im UI.
+- 🔑 **Session-Admin-Ansicht** pro Runde mit kontrollierter Empfänger-Anzeige.
 - � **Session-Codes statt globalem Admin** – jede Runde hat ihren eigenen Admin-Zugang.
 - �🐳 **Container-Setup** via `Dockerfile`.
 - 🤖 **CI/CD über GitHub Actions** mit automatischem Image-Build & Push nach GHCR.
