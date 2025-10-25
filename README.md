@@ -2,6 +2,8 @@
 
 Eine Streamlit-App zum Auslosen von Wichtel-Partner:innen – inklusive persistenter Speicherung der Sessions in einer SQLite-Datenbank und Admin-Überblick über alle Runden.
 
+App: https://wichteln.streamlit.app/
+
 ## Highlights
 
 - 🚀 **Streamlit-Frontend** für Teilnehmer:innen und Admin.
