@@ -80,56 +80,66 @@ def parse_pairs(pairs_text, names):
     return pairs
 
 def generate_assignment(names, pairs, allow_self=False, max_attempts=5000):
-    """Generiert eine Wichtel-Zuteilung mit Paare-Schutz"""
+    """Generiert eine Wichtel-Zuteilung mit Paare-Schutz (verhindert, dass jemand seinem Partner zugewiesen wird)."""
     if len(names) == 0:
         return None
     if len(names) == 1 and allow_self:
         return [(names[0], names[0])]
     if len(names) == 1:
         return None
-    
-    # Erstelle Paare-Map
+
+    # Erstelle Paare-Map (lowercase für sichere Vergleiche)
     pair_map = {}
     for a, b in pairs:
         pair_map[a.lower()] = b.lower()
         pair_map[b.lower()] = a.lower()
-    
+
     n = len(names)
     indices = list(range(n))
-    
+
+    # Lowercase-Namen für Vergleiche
+    names_lower = [n_.lower() for n_ in names]
+
     for attempt in range(max_attempts):
         perm = indices.copy()
         random.shuffle(perm)
-        
+
         valid = True
         for i in range(n):
             giver_idx = i
             receiver_idx = perm[i]
-            
+
             # Regel 1: Keine Selbstzuweisung (außer erlaubt)
             if not allow_self and giver_idx == receiver_idx:
                 valid = False
                 break
-            
-            # Regel 2: Keine gegenseitigen Paare
-            giver = names[giver_idx].lower()
-            receiver = names[receiver_idx].lower()
+
+            giver = names_lower[giver_idx]
+            receiver = names_lower[receiver_idx]
+
+            # Regel 2: Verhindere, dass jemand seinem definierten Partner zugewiesen wird
             partner = pair_map.get(giver)
-            
             if partner and partner == receiver:
-                # Prüfe ob es gegenseitig ist
-                if perm[receiver_idx] == giver_idx:
-                    valid = False
-                    break
-        
+                valid = False
+                break
+
         if valid:
             return [(names[i], names[perm[i]]) for i in range(n)]
-    
-    # Fallback: Rotation
+
+    # Fallback: Rotation — aber nur wenn sie nicht gegen Paare verstößt
     if not allow_self and n > 1:
-        return [(names[i], names[(i + 1) % n]) for i in range(n)]
-    
+        rotation = [(names[i], names[(i + 1) % n]) for i in range(n)]
+        # Prüfe Rotation auf Paar-Konflikte
+        conflict = False
+        for giver, receiver in rotation:
+            if pair_map.get(giver.lower()) == receiver.lower():
+                conflict = True
+                break
+        if not conflict:
+            return rotation
+
     return None
+
 
 # Initialisiere Session State
 if 'authenticated' not in st.session_state:
