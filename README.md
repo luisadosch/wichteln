@@ -32,6 +32,15 @@ Beim ersten Start wird die SQLite-Datenbank automatisch angelegt (`data/wichteln
   - Lokal: `export ADMIN_PASSWORD="deinPasswort"`
   - Streamlit Cloud: `secrets.toml` anlegen.
 
+### App ausprobieren
+
+1. **Admin-Login:** Öffne `http://localhost:8501`, wechsle auf den Admin-Tab und logge dich mit dem gesetzten Admin-Passwort ein.
+2. **Runde erstellen:** Namen eintragen, optional Paare setzen, auf „Zuteilung generieren“ klicken und anschließend „Permanent speichern“.
+3. **Teilnehmer-Flow testen:** Wechsle in den Teilnehmer-Modus, gib das generierte User-Passwort sowie einen Namen & Code ein, um den Empfänger anzeigen zu lassen.
+4. **Sessions prüfen:** Zurück im Admin-Tab die gespeicherten Sessions ansehen, Codes kontrollieren oder Sessions ins Formular zurückladen.
+
+So stellst du sicher, dass sowohl Admin- als auch Teilnehmer-Ansicht korrekt funktionieren.
+
 ## Datenhaltung
 
 - Die App speichert Sessions in `data/wichteln.db`.
@@ -60,6 +69,7 @@ Die App ist anschließend unter `http://localhost:8501` erreichbar.
 
 ## Qualitätssicherung
 
+- Tests: `pytest`
 - Syntax-Check: `python -m compileall .`
 - Optional eigene Tests / Linting ergänzen.
 
