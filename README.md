@@ -61,7 +61,7 @@ docker build -t wichteln:latest .
 docker run -p 8501:8501 wichteln:latest
 ```
 
-Die App ist anschließend unter `http://localhost:8501` erreichbar.
+Die App ist anschließend unter `https://wichteln.streamlit.app/` erreichbar.
 
 ## Qualitätssicherung
 
