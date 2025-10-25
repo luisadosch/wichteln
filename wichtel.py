@@ -1,9 +1,138 @@
+import os
 import streamlit as st
 import random
 import json
 import hashlib
+import sqlite3
+from pathlib import Path
+from datetime import datetime
+from contextlib import contextmanager
 
 st.set_page_config(page_title="Wichtel-Zuteiler", page_icon="🎁", layout="wide")
+
+# Datenbank-Konfiguration
+DEFAULT_DB_PATH = Path(__file__).resolve().parent / "data" / "wichteln.db"
+DB_PATH = None
+
+
+def get_db_path() -> Path:
+    global DB_PATH
+    if DB_PATH is None:
+        custom = os.getenv("WICHTEL_DB_PATH")
+        DB_PATH = Path(custom).expanduser().resolve() if custom else DEFAULT_DB_PATH
+    return DB_PATH
+
+
+def set_db_path(path: Path):
+    global DB_PATH
+    DB_PATH = Path(path).expanduser().resolve()
+
+
+def init_database(db_path: Path | None = None):
+    """Initialisiert die SQLite-Datenbank und legt Tabellen an."""
+    target_path = Path(db_path).expanduser().resolve() if db_path else get_db_path()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(target_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_password TEXT NOT NULL,
+                user_password_hash TEXT NOT NULL UNIQUE,
+                assignments_json TEXT NOT NULL,
+                pairs_json TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+@contextmanager
+def get_db_connection():
+    path = get_db_path()
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def hash_user_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def save_session_to_db(user_password: str, assignments: list, pairs: list) -> None:
+    payload = {
+        "assignments": assignments,
+        "pairs": pairs,
+    }
+    assignments_json = json.dumps(payload["assignments"], ensure_ascii=False)
+    pairs_json = json.dumps(payload["pairs"], ensure_ascii=False)
+    hashed = hash_user_password(user_password)
+    timestamp = datetime.utcnow().isoformat()
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO sessions (user_password, user_password_hash, assignments_json, pairs_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_password_hash) DO UPDATE SET
+                user_password = excluded.user_password,
+                assignments_json = excluded.assignments_json,
+                pairs_json = excluded.pairs_json,
+                created_at = excluded.created_at
+            """,
+            (user_password, hashed, assignments_json, pairs_json, timestamp),
+        )
+
+
+def load_session_from_db(user_password: str):
+    hashed = hash_user_password(user_password)
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT user_password, assignments_json, pairs_json FROM sessions WHERE user_password_hash = ?",
+            (hashed,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    assignments = json.loads(row["assignments_json"])
+    pairs = json.loads(row["pairs_json"]) if row["pairs_json"] else []
+
+    return {
+        "user_password": row["user_password"],
+        "assignments": assignments,
+        "pairs": pairs,
+    }
+
+
+def list_sessions_for_admin():
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, user_password, assignments_json, pairs_json, created_at FROM sessions ORDER BY datetime(created_at) DESC"
+        ).fetchall()
+
+    sessions = []
+    for row in rows:
+        assignments = json.loads(row["assignments_json"])
+        pairs = json.loads(row["pairs_json"]) if row["pairs_json"] else []
+        sessions.append(
+            {
+                "id": row["id"],
+                "user_password": row["user_password"],
+                "assignments": assignments,
+                "pairs": pairs,
+                "created_at": row["created_at"],
+                "participant_count": len(assignments),
+            }
+        )
+    return sessions
+
+
+init_database()
 
 # Hilfsfunktionen
 def generate_code(length=6):
@@ -17,48 +146,6 @@ def generate_user_password(length=8):
              'Frost', 'Wind', 'Nebel', 'Sonne', 'Regen', 'Wolke', 'Blitz', 'Feuer']
     nums = ''.join([str(random.randint(0, 9)) for _ in range(3)])
     return f"{random.choice(words)}{nums}"
-
-def get_storage_key(user_password):
-    """Erstellt einen sicheren Storage-Key"""
-    hash_key = hashlib.sha256(user_password.encode()).hexdigest()[:16]
-    return f"wichtel_{hash_key}"
-
-async def save_wichtel_data(user_password, data):
-    """Speichert Wichtel-Daten in Streamlit Cloud Storage"""
-    try:
-        storage_key = get_storage_key(user_password)
-        
-        # Speichere in Streamlit's persistent storage
-        await window.storage.set(storage_key, json.dumps(data), shared=True)
-        return True
-    except Exception as e:
-        st.error(f"Fehler beim Speichern: {e}")
-        return False
-
-async def load_wichtel_data(user_password):
-    """Lädt Wichtel-Daten aus Streamlit Cloud Storage"""
-    try:
-        storage_key = get_storage_key(user_password)
-        
-        # Lade aus Streamlit's persistent storage
-        result = await window.storage.get(storage_key, shared=True)
-        
-        if result and result.get('value'):
-            return json.loads(result['value'])
-        return None
-    except Exception as e:
-        # Key existiert nicht
-        return None
-
-async def list_all_sessions():
-    """Listet alle gespeicherten Sessions (nur Anzahl für Statistik)"""
-    try:
-        result = await window.storage.list('wichtel_', shared=True)
-        if result and result.get('keys'):
-            return len(result['keys'])
-        return 0
-    except:
-        return 0
 
 def parse_pairs(pairs_text, names):
     """Parst Paare aus dem Textfeld"""
@@ -154,49 +241,16 @@ if 'current_user_password' not in st.session_state:
     st.session_state.current_user_password = None
 if 'loaded_data' not in st.session_state:
     st.session_state.loaded_data = None
-if 'storage_available' not in st.session_state:
-    st.session_state.storage_available = True
+if 'selected_admin_session_id' not in st.session_state:
+    st.session_state.selected_admin_session_id = None
+if 'admin_sessions_cache' not in st.session_state:
+    st.session_state.admin_sessions_cache = []
 
 # Admin Passwort - aus Environment Variable oder Default
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "wichtel2024")  # ⚠️ Setze in Streamlit Secrets!
 
 # Header
 st.title("🎁 Wichtel-Zuteiler")
-
-# JavaScript für Storage einbinden
-storage_script = """
-<script>
-// Wrapper für Streamlit Storage API
-window.wichtelStorage = {
-    async save(key, data) {
-        try {
-            const result = await window.storage.set(key, data, true);
-            return result !== null;
-        } catch(e) {
-            console.error('Storage error:', e);
-            return false;
-        }
-    },
-    async load(key) {
-        try {
-            const result = await window.storage.get(key, true);
-            return result?.value || null;
-        } catch(e) {
-            return null;
-        }
-    },
-    async count(prefix) {
-        try {
-            const result = await window.storage.list(prefix, true);
-            return result?.keys?.length || 0;
-        } catch(e) {
-            return 0;
-        }
-    }
-};
-</script>
-"""
-st.components.v1.html(storage_script, height=0)
 
 # Sidebar für Modus-Auswahl
 with st.sidebar:
@@ -205,13 +259,8 @@ with st.sidebar:
     
     st.divider()
     
-    # Info über Storage
-    if st.session_state.storage_available:
-        st.success("✅ Cloud-Storage aktiv")
-    else:
-        st.warning("⚠️ Lokaler Modus")
-    
-    st.caption("💾 Daten werden sicher in der Cloud gespeichert")
+    st.success("✅ Datenbank verbunden")
+    st.caption("💾 Sessions bleiben auch nach Neustart bestehen")
 
 # TEILNEHMER-MODUS
 if mode == "👤 Teilnehmer":
@@ -230,19 +279,16 @@ if mode == "👤 Teilnehmer":
         
         if unlock_btn and user_pw:
             with st.spinner("Lade Daten..."):
-                # Verwende JavaScript Storage
-                storage_key = get_storage_key(user_pw)
-                
-                # Temporär: Prüfe ob Daten im Session State sind (Fallback)
-                if f'saved_data_{storage_key}' in st.session_state:
-                    loaded_data = st.session_state[f'saved_data_{storage_key}']
-                    st.session_state.current_user_password = user_pw
-                    st.session_state.loaded_data = loaded_data
-                    st.success("✅ Wichtel-Runde geladen!")
-                    st.rerun()
-                else:
-                    st.error("❌ Keine Wichtel-Runde mit diesem Passwort gefunden!")
-                    st.info("💡 Tipp: Der Admin muss die Runde erst erstellen und speichern.")
+                loaded_data = load_session_from_db(user_pw)
+
+            if loaded_data:
+                st.session_state.current_user_password = user_pw
+                st.session_state.loaded_data = loaded_data
+                st.success("✅ Wichtel-Runde geladen!")
+                st.rerun()
+            else:
+                st.error("❌ Keine Wichtel-Runde mit diesem Passwort gefunden!")
+                st.info("💡 Tipp: Der Admin muss die Runde erst erstellen und speichern.")
         
         st.divider()
         st.caption("💡 **Hinweis:** Das User-Passwort wurde vom Organisator beim Erstellen der Zuteilung generiert.")
@@ -328,6 +374,9 @@ else:
     else:
         # ADMIN IST EINGELOGGT
         st.success("✅ Als Admin eingeloggt")
+
+        # Sessions aus Datenbank laden
+        st.session_state.admin_sessions_cache = list_sessions_for_admin()
         
         if st.button("🚪 Logout", key="logout"):
             st.session_state.authenticated = False
@@ -494,24 +543,103 @@ else:
                         "pairs": [[a, b] for a, b in st.session_state.temp_pairs]
                     }
                     
-                    # Speichere in Session State (Fallback für Cloud Storage)
-                    storage_key = get_storage_key(st.session_state.temp_user_password)
-                    st.session_state[f'saved_data_{storage_key}'] = data_to_save
-                    
-                    st.success("✅ Zuteilung permanent gespeichert!")
-                    st.balloons()
-                    
-                    st.info(f"🔑 Teilnehmer können jetzt mit dem Passwort `{st.session_state.temp_user_password}` zugreifen!")
-                    
-                    # Reset temp data
-                    st.session_state.temp_assignments = None
-                    st.session_state.temp_codes = {}
-                    st.session_state.temp_pairs = []
-                    if 'temp_user_password' in st.session_state:
-                        saved_pw = st.session_state.temp_user_password
-                        del st.session_state.temp_user_password
+                    try:
+                        save_session_to_db(
+                            data_to_save["user_password"],
+                            data_to_save["assignments"],
+                            data_to_save["pairs"],
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Speichern fehlgeschlagen: {e}")
+                    else:
+                        # Admin-Cache aktualisieren
+                        st.session_state.admin_sessions_cache = list_sessions_for_admin()
+                        
+                        st.success("✅ Zuteilung permanent gespeichert!")
+                        st.balloons()
+
+                        st.info(f"🔑 Teilnehmer können jetzt mit dem Passwort `{st.session_state.temp_user_password}` zugreifen!")
+                        
+                        # Reset temp data
+                        st.session_state.temp_assignments = None
+                        st.session_state.temp_codes = {}
+                        st.session_state.temp_pairs = []
+                        if 'temp_user_password' in st.session_state:
+                            del st.session_state.temp_user_password
+
+        st.divider()
+        st.header("📚 Gespeicherte Sessions")
+
+        if st.button("🔄 Liste aktualisieren", key="refresh_sessions"):
+            st.session_state.admin_sessions_cache = list_sessions_for_admin()
+
+        sessions = st.session_state.admin_sessions_cache
+
+        if not sessions:
+            st.session_state.selected_admin_session_id = None
+            st.info("Noch keine Sessions gespeichert. Erstelle eine neue Runde und speichere sie permanent.")
+        else:
+            option_entries = []
+            for idx, session in enumerate(sessions):
+                label = f"{idx+1}. {session['created_at'][:19]} UTC – {session['user_password']} ({session['participant_count']} TN)"
+                option_entries.append((label, session["id"], session))
+
+            available_labels = [entry[0] for entry in option_entries]
+
+            default_index = 0
+            if st.session_state.selected_admin_session_id is not None:
+                for idx, (_, session_id, _) in enumerate(option_entries):
+                    if session_id == st.session_state.selected_admin_session_id:
+                        default_index = idx
+                        break
+
+            selected_label = st.selectbox(
+                "Wähle eine Session zur Ansicht:",
+                available_labels,
+                index=default_index,
+                key="admin_session_select",
+            )
+
+            selected_session = None
+            for label, session_id, payload in option_entries:
+                if label == selected_label:
+                    selected_session = payload
+                    st.session_state.selected_admin_session_id = session_id
+                    break
+
+            if selected_session:
+                st.subheader("🔎 Session-Details")
+                left_col, right_col = st.columns(2)
+                with left_col:
+                    st.metric("Teilnehmer", selected_session["participant_count"])
+                    st.metric("User-Passwort", selected_session["user_password"])
+                with right_col:
+                    st.metric("Erstellt am", selected_session["created_at"][:19] + " UTC")
+                    st.metric("Paare", len(selected_session["pairs"]))
+
+                st.markdown("### 🎁 Gesamte Zuteilung")
+                for item in selected_session["assignments"]:
+                    giver = item["name"]
+                    code = item["code"]
+                    receiver = item["receiver"]
+                    st.markdown(f"- **{giver}** (`{code}`) → {receiver}")
+
+                if selected_session["pairs"]:
+                    st.markdown("### 👫 Paare")
+                    st.write(", ".join(f"{a} & {b}" for a, b in selected_session["pairs"]))
+
+                if st.button("🔁 Session in Formular laden", key="load_session_into_form"):
+                    st.session_state.temp_assignments = [
+                        (item["name"], item["receiver"]) for item in selected_session["assignments"]
+                    ]
+                    st.session_state.temp_codes = {
+                        item["name"]: item["code"] for item in selected_session["assignments"]
+                    }
+                    st.session_state.temp_pairs = [tuple(pair) for pair in selected_session["pairs"]]
+                    st.session_state.temp_user_password = selected_session["user_password"]
+                    st.success("Session in Formular übernommen. Du kannst nun Änderungen vornehmen und neu speichern.")
 
 # Footer
 st.divider()
-st.caption("🔒 **Sicherheit:** Daten werden verschlüsselt gespeichert. User-Passwörter sind gehashed.")
-st.caption("☁️ **Cloud-Storage:** Daten sind auch nach Neustart verfügbar und bleiben privat.")
+st.caption("🔒 **Sicherheit:** User-Passwörter werden gehasht geprüft und stehen dem Admin zur Verwaltung bereit.")
+st.caption("🗄️ **Datenhaltung:** Sessions werden dauerhaft in einer lokalen SQLite-Datenbank gespeichert.")
