@@ -7,7 +7,8 @@ Eine Streamlit-App zum Auslosen von Wichtel-Partner:innen – inklusive persiste
 - 🚀 **Streamlit-Frontend** für Teilnehmer:innen und Admin.
 - 🗄️ **Persistente Sessions** dank SQLite (Datei: `data/wichteln.db`).
 - 🔑 **Admin-Überblick** über sämtliche gespeicherten Runden direkt im UI.
-- 🐳 **Container-Setup** via `Dockerfile`.
+- � **Session-Codes statt globalem Admin** – jede Runde hat ihren eigenen Admin-Zugang.
+- �🐳 **Container-Setup** via `Dockerfile`.
 - 🤖 **CI/CD über GitHub Actions** mit automatischem Image-Build & Push nach GHCR.
 
 ## Voraussetzungen
@@ -26,18 +27,12 @@ streamlit run wichtel.py
 
 Beim ersten Start wird die SQLite-Datenbank automatisch angelegt (`data/wichteln.db`).
 
-### Konfiguration
-
-- Setze das Admin-Passwort über Environment-Variablen oder `streamlit secrets`:
-  - Lokal: `export ADMIN_PASSWORD="deinPasswort"`
-  - Streamlit Cloud: `secrets.toml` anlegen.
-
 ### App ausprobieren
 
-1. **Admin-Login:** Öffne `http://localhost:8501`, wechsle auf den Admin-Tab und logge dich mit dem gesetzten Admin-Passwort ein.
-2. **Runde erstellen:** Namen eintragen, optional Paare setzen, auf „Zuteilung generieren“ klicken und anschließend „Permanent speichern“.
-3. **Teilnehmer-Flow testen:** Wechsle in den Teilnehmer-Modus, gib das generierte User-Passwort sowie einen Namen & Code ein, um den Empfänger anzeigen zu lassen.
-4. **Sessions prüfen:** Zurück im Admin-Tab die gespeicherten Sessions ansehen, Codes kontrollieren oder Sessions ins Formular zurückladen.
+1. **Session anlegen:** Öffne `http://localhost:8501`, wechsle auf den Tab **Session-Admin**, gib die Teilnehmer:innen (und optional Paare) ein und klicke auf „Zuteilung generieren“.
+2. **Zugangsdaten sichern:** Nach dem Speichern erhältst du zwei Codes – das **User-Passwort** für alle Teilnehmer:innen und den **Session-Admin-Code** nur für dich.
+3. **Teilnehmer-Flow testen:** Wechsle in den Teilnehmer-Modus, gib das User-Passwort sowie einen Namen & Code ein, um den Empfänger anzeigen zu lassen.
+4. **Session verwalten:** Gib im Session-Admin-Tab den Session-Code ein, um die Runde erneut zu öffnen. Empfänger:innen werden erst nach Klick auf „Empfänger anzeigen“ sichtbar.
 
 So stellst du sicher, dass sowohl Admin- als auch Teilnehmer-Ansicht korrekt funktionieren.
 
@@ -46,6 +41,7 @@ So stellst du sicher, dass sowohl Admin- als auch Teilnehmer-Ansicht korrekt fun
 - Die App speichert Sessions in `data/wichteln.db`.
 - Im Repository ist `data/.gitignore` hinterlegt, damit die Datenbank nicht eingecheckt wird.
 - Passwörter werden zur Authentifizierung gehasht, bleiben aber für den Admin sichtbar, um sie teilen zu können.
+- Der Session-Admin-Code wird gehasht gespeichert – nur wer den Code kennt, kann die Runde verwalten.
 
 ## Deployment über GitHub Actions
 
