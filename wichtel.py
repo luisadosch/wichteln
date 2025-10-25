@@ -470,15 +470,15 @@ else:
 
             txt_content += "CODES FÜR TEILNEHMER:\n"
             txt_content += "-" * 30 + "\n"
-            for giver, _ in st.session_state.temp_assignments:
-                txt_content += f"{giver}: {st.session_state.temp_codes[giver]}\n"
+            for giver, _ in (st.session_state.temp_assignments or []):
+                txt_content += f"{giver}: {st.session_state.temp_codes.get(giver, '')}\n"
+          
 
             txt_content += "\n" + "="*50 + "\n"
             txt_content += "KOMPLETTE ZUTEILUNG (nur für Session-Admin):\n"
             txt_content += "-" * 30 + "\n"
-            for giver, receiver in st.session_state.temp_assignments:
-                txt_content += f"{giver} ({st.session_state.temp_codes[giver]}) → {receiver}\n"
-
+            for giver, receiver in (st.session_state.temp_assignments or []):
+                txt_content += f"{giver} ({st.session_state.temp_codes.get(giver, '')}) → {receiver}\n"
             st.download_button(
                 "📄 Session-Admin-Kopie herunterladen",
                 txt_content,
