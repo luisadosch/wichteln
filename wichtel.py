@@ -439,35 +439,6 @@ else:
                 else:
                     st.error("❌ Konnte keine neue Zuteilung finden!")
 
-    # Vorschau anzeigen
-    if st.session_state.temp_assignments:
-        st.divider()
-        st.header("📋 Vorschau der Zuteilung")
-
-        if st.session_state.temp_pairs:
-            pair_names = [f"{a} & {b}" for a, b in st.session_state.temp_pairs]
-            st.info(f"👫 **Definierte Paare:** {', '.join(pair_names)}")
-
-        pair_map = {}
-        for a, b in st.session_state.temp_pairs:
-            pair_map[a] = b
-            pair_map[b] = a
-
-        st.subheader("Generierte Codes:")
-        for giver, receiver in st.session_state.temp_assignments:
-            code = st.session_state.temp_codes[giver]
-            partner = pair_map.get(giver)
-
-            col1, col2, col3 = st.columns([2, 2, 1])
-            with col1:
-                if partner:
-                    st.markdown(f"**{giver}** 👫 _(mit {partner})_")
-                else:
-                    st.markdown(f"**{giver}**")
-            with col2:
-                st.code(code, language=None)
-            with col3:
-                st.caption(f"→ {receiver}")
 
         st.divider()
 
