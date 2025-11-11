@@ -1,74 +1,119 @@
 # 🎁 Wichtel-Zuteiler
-
-Eine Streamlit-App zum Auslosen von Wichtel-Partner:innen – inklusive persistenter Speicherung der Sessions in einer SQLite-Datenbank und Admin-Überblick über alle Runden.
+Eine Streamlit-App zum Auslosen von Wichtelpartnern mit persistenter Speicherung von Sessions in Supabase (Postgres). Die App bietet zwei Modi: Teilnehmende (finden ihren Empfänger anhand eines persönlichen Codes) und Session-Admin (Erstellen/Verwalten von Runden).
 
 App: https://wichteln.streamlit.app/
 
 ## Highlights
 
-- 🚀 **Streamlit-Frontend** für Teilnehmer:innen und Admin.
-- 🗄️ **Persistente Sessions** dank SQLite (Datei: `data/wichteln.db`).
-- 🔑 **Session-Admin-Ansicht** pro Runde mit kontrollierter Empfänger-Anzeige.
-- � **Session-Codes statt globalem Admin** – jede Runde hat ihren eigenen Admin-Zugang.
-- �🐳 **Container-Setup** via `Dockerfile`.
-- 🤖 **CI/CD über GitHub Actions** mit automatischem Image-Build & Push nach GHCR.
+- 🚀 Streamlit-Frontend für Teilnehmende und Admin
+- ☁️ Persistente Sessions in Supabase
+- 🔐 Pro-Session User-Passwort + Session-Admin-Code für sichere Verwaltung
+- 🛡️ Admin-Code und Prüfungen via Hashing; Teilnehmer-Passwörter werden gehasht geprüft
+- 🐳 Container-Setup über das mitgelieferte `Dockerfile`
 
 ## Voraussetzungen
 
 - Python 3.11 (empfohlen)
-- `pip`
+- pip
+- Ein Supabase-Projekt (oder PostgreSQL-kompatible REST-API), Zugangsdaten siehe unten
+
+## Supabase / Secrets
+
+Die App speichert Sessions in einer Supabase-Instanz. Es gibt zwei Möglichkeiten, die Verbindungsdaten bereitzustellen:
+
+1. Umgebungvariablen
+
+	- SUPABASE_URL (z. B. https://xyz.supabase.co)
+	- SUPABASE_SERVICE_ROLE_KEY (oder SUPABASE_KEY)
+	- optional: SUPABASE_SCHEMA (Default: public)
+
+	Du kannst diese Variablen lokal z. B. in einer `.env`-Datei ablegen und mit `python-dotenv` oder deinem Shell-Setup laden.
+
+2. `st.secrets` (Streamlit)
+
+	Wenn du die App auf Streamlit Cloud/deployed betreibst, kannst du die Secrets unter `connections.supabase.url`, `connections.supabase.key` und `connections.supabase.schema` hinterlegen. Die App versucht zuerst `st.secrets` zu lesen und fällt dann auf die Umgebungsvariablen zurück.
+
+Wichtig: Die App wirft einen Fehler, wenn weder `SUPABASE_URL` noch `SUPABASE_SERVICE_ROLE_KEY` (oder `st.secrets`) gesetzt sind.
+
+### Datenbank-Schema anlegen
+
+Da Supabase standardmäßig keinen `rpc/sql`-Endpunkt bereitstellt, kann die App das Tabellen-Schema nicht automatisch erzeugen. Lege die Tabelle daher einmalig manuell an:
+
+1. Öffne im Supabase Dashboard den SQL Editor deines Projekts.
+2. Kopiere den Inhalt aus `supabase/schema.sql` (in diesem Repository).
+3. Führe das Skript mit einem Service-Role-Key aus.
+
+Nach dem erfolgreichen Ausführen steht die Tabelle `public.sessions` bereit und die App kann Sessions speichern.
 
 ## Lokale Entwicklung
 
+1. Virtuelle Umgebung anlegen und Abhängigkeiten installieren
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate  # macOS / Linux
 pip install -r requirements.txt
+```
+
+2. Supabase-Zugang lokal setzen (Beispiel `.env`)
+
+```env
+SUPABASE_URL=https://...
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+3. App starten
+
+```bash
 streamlit run wichtel.py
 ```
 
-Beim ersten Start wird die SQLite-Datenbank automatisch angelegt (`data/wichteln.db`).
+Öffne anschließend http://localhost:8501
 
-### App ausprobieren
+## Kurzanleitung zur App
 
-1. **Session anlegen:** Öffne `http://localhost:8501`, wechsle auf den Tab **Session-Admin**, gib die Teilnehmer:innen (und optional Paare) ein und klicke auf „Zuteilung generieren“.
-2. **Zugangsdaten sichern:** Nach dem Speichern erhältst du zwei Codes – das **User-Passwort** für alle Teilnehmer:innen und den **Session-Admin-Code** nur für dich.
-3. **Teilnehmer-Flow testen:** Wechsle in den Teilnehmer-Modus, gib das User-Passwort sowie einen Namen & Code ein, um den Empfänger anzeigen zu lassen.
-4. **Session verwalten:** Gib im Session-Admin-Tab den Session-Code ein, um die Runde erneut zu öffnen. Empfänger:innen werden erst nach Klick auf „Empfänger anzeigen“ sichtbar.
+1. Session erstellen (Admin-Modus): Teilnehmende (ein Name pro Zeile) eingeben, optional Paare (die sich nicht gegenseitig beschenken sollen). Zuteilung generieren.
+2. Codes: Die App erzeugt ein gemeinsames User-Passwort (für alle Teilnehmenden) und pro Person einen persönlichen Code. Notiere User-Passwort und Session-Admin-Code.
+3. Session speichern: Nach dem Speichern werden die Daten in Supabase abgelegt. Teilnehmende können mit dem User-Passwort in den Teilnehmer-Modus und ihren Empfänger mit Namen + persönlichem Code anzeigen.
+4. Session verwalten: Mit dem Session-Admin-Code kannst du die gesamte Zuteilung sehen und Empfänger einzeln freigeben.
 
-So stellst du sicher, dass sowohl Admin- als auch Teilnehmer-Ansicht korrekt funktionieren.
+## Docker
 
-## Datenhaltung
+Das Projekt enthält ein einfaches `Dockerfile` (Base: python:3.11-slim) und startet die Streamlit-App.
 
-- Die App speichert Sessions in `data/wichteln.db`.
-- Im Repository ist `data/.gitignore` hinterlegt, damit die Datenbank nicht eingecheckt wird.
-- Passwörter werden zur Authentifizierung gehasht, bleiben aber für den Admin sichtbar, um sie teilen zu können.
-- Der Session-Admin-Code wird gehasht gespeichert – nur wer den Code kennt, kann die Runde verwalten.
-
-## Deployment über GitHub Actions
-
-Workflow-Datei: `.github/workflows/deploy.yml`
-
-Was passiert?
-1. Installiert Dependencies und führt `python -m compileall .` aus.
-2. Baut das Docker-Image auf Basis des `Dockerfile`.
-3. Push nach GitHub Container Registry (`ghcr.io/<owner>/wichteln`) bei Push auf `main`.
-
-> **Hinweis:** Für externe Registries müssen ggf. weitere Secrets hinterlegt werden. Der mitgelieferte Workflow nutzt lediglich das automatische `GITHUB_TOKEN`.
-
-## Container starten
+Build & Run:
 
 ```bash
 docker build -t wichteln:latest .
-docker run -p 8501:8501 wichteln:latest
+docker run -p 8501:8501 --env SUPABASE_URL="https://..." --env SUPABASE_SERVICE_ROLE_KEY="..." wichteln:latest
 ```
 
-Die App ist anschließend unter `https://wichteln.streamlit.app/` erreichbar.
+Die App ist dann unter `http://localhost:8501` erreichbar. Achte darauf, die Supabase-URL und den Key als Umgebungsvariablen an den Container zu übergeben.
 
-## Qualitätssicherung
+## Tests
 
-- Tests: `pytest`
-- Syntax-Check: `python -m compileall .`
-- Optional eigene Tests / Linting ergänzen.
+Unit-Tests existieren unter `tests/` und nutzen `pytest`. Die Tests mocken HTTP-Aufrufe zu Supabase, daher benötigst du keine echte Supabase-Instanz zum Ausführen der Tests.
+
+```bash
+pip install -r requirements.txt
+pytest -q
+```
+
+## Sicherheitshinweise
+
+- SUPABASE_SERVICE_ROLE_KEY ist mächtig (Service Role) und sollte sicher verwahrt werden. In Produktionssetups empfehle ich, nur minimal nötige Keys zu verwenden und Zugriffsrechte richtig zu setzen.
+- Teile den Session-Admin-Code nur mit Personen, die die komplette Zuteilung sehen dürfen.
+- Die App hasht Passwörter (SHA-256) für Vergleiche; wenn du stärkere Sicherheitsanforderungen hast, erwäge salting oder ein bewährtes Auth-System.
+
+## Entwicklung & Beiträge
+
+- Code unter `wichtel.py` ist die Haupt-App (Streamlit).
+- Tests unter `tests/`.
+- Vorschläge, Bug-Reports oder PRs sind willkommen.
+
+## Kontakt
+
+Wenn du Hilfe bei Deployment oder Supabase-Einrichtung brauchst, öffne bitte ein Issue oder kontaktiere die Projektverantwortlichen.
 
 Viel Spaß beim Wichteln! 🎄
+```

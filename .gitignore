@@ -1,0 +1,5 @@
+# Local secrets
+.streamlit/secrets.toml
+
+# Environment configuration
+.env
