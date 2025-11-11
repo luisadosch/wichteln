@@ -1,6 +1,8 @@
 # 🎁 Wichtel-Zuteiler
 Eine Streamlit-App zum Auslosen von Wichtelpartnern mit persistenter Speicherung von Sessions in Supabase (Postgres). Die App bietet zwei Modi: Teilnehmende (finden ihren Empfänger anhand eines persönlichen Codes) und Session-Admin (Erstellen/Verwalten von Runden).
 
+App: https://wichteln.streamlit.app/
+
 ## Highlights
 
 - 🚀 Streamlit-Frontend für Teilnehmende und Admin
