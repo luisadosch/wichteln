@@ -1,72 +1,153 @@
+import logging
 import os
-import streamlit as st
 import random
 import json
 import hashlib
-import sqlite3
-from pathlib import Path
-from datetime import datetime
-from contextlib import contextmanager
+from datetime import datetime, timezone
+
+import requests
+import streamlit as st
 
 st.set_page_config(page_title="Wichtel-Zuteiler", page_icon="🎁", layout="wide")
 
 # Datenbank-Konfiguration
-DEFAULT_DB_PATH = Path(__file__).resolve().parent / "data" / "wichteln.db"
-DB_PATH = None
+logger = logging.getLogger(__name__)
 
+def _resolve_supabase_settings():
+    schema = os.getenv("SUPABASE_SCHEMA", "public")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
 
-def get_db_path() -> Path:
-    global DB_PATH
-    if DB_PATH is None:
-        custom = os.getenv("WICHTEL_DB_PATH")
-        DB_PATH = Path(custom).expanduser().resolve() if custom else DEFAULT_DB_PATH
-    return DB_PATH
-
-
-def set_db_path(path: Path):
-    global DB_PATH
-    DB_PATH = Path(path).expanduser().resolve()
-
-
-def init_database(db_path: Path | None = None):
-    """Initialisiert die SQLite-Datenbank und legt Tabellen an."""
-    target_path = Path(db_path).expanduser().resolve() if db_path else get_db_path()
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(target_path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_password TEXT NOT NULL,
-                user_password_hash TEXT NOT NULL UNIQUE,
-                admin_code_hash TEXT,
-                assignments_json TEXT NOT NULL,
-                pairs_json TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-
-        # Spalte für Admin-Code nachrüsten, falls sie fehlt
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
-        if "admin_code_hash" not in columns:
-            conn.execute("ALTER TABLE sessions ADD COLUMN admin_code_hash TEXT")
-        # Sicherstellen, dass ein passender Index existiert
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_admin_code_hash ON sessions(admin_code_hash)"
-        )
-
-
-@contextmanager
-def get_db_connection():
-    path = get_db_path()
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
     try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+        supabase_secrets = st.secrets.get("connections", {}).get("supabase", {})
+        url = supabase_secrets.get("url", url)
+        key = supabase_secrets.get("key", key)
+        schema = supabase_secrets.get("schema", schema)
+    except Exception:  # pragma: no cover - st.secrets may not be available in tests
+        pass
+
+    if not url or not key:
+        raise RuntimeError(
+            "Supabase credentials missing. Please configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or st.secrets."
+        )
+
+    return url, key, schema
+
+
+SUPABASE_URL, SUPABASE_KEY, SUPABASE_SCHEMA = _resolve_supabase_settings()
+def _supabase_base_url() -> str:
+    return SUPABASE_URL.rstrip("/")
+
+
+def _supabase_table_endpoint(table: str) -> str:
+    return f"{_supabase_base_url()}/rest/v1/{table}"
+
+
+def _supabase_sql_endpoint() -> str:
+    return f"{_supabase_base_url()}/rest/v1/rpc/sql"
+
+
+def _supabase_headers(*, write: bool = False, prefer: list[str] | None = None, include_count: bool = False) -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    schema = SUPABASE_SCHEMA or "public"
+    if schema != "public":
+        profile_header = "Content-Profile" if write else "Accept-Profile"
+        headers[profile_header] = schema
+
+    prefer_clauses: list[str] = []
+    if prefer:
+        prefer_clauses.extend(prefer)
+    if include_count:
+        prefer_clauses.append("count=exact")
+    if prefer_clauses:
+        headers["Prefer"] = ",".join(dict.fromkeys(filter(None, prefer_clauses)))
+    return headers
+
+
+def _supabase_execute_sql(query: str) -> None:
+    headers = _supabase_headers(write=True)
+    headers["Content-Type"] = "application/json"
+    response = requests.post(_supabase_sql_endpoint(), headers=headers, json={"query": query}, timeout=60)
+    if response.status_code != 200:
+        raise RuntimeError(f"Supabase SQL error: {response.status_code} {response.text}")
+
+
+def _ensure_supabase_schema() -> None:
+    schema = SUPABASE_SCHEMA or "public"
+    table = f"{schema}.sessions"
+    ddl = f"""
+    CREATE TABLE IF NOT EXISTS {table} (
+        id BIGSERIAL PRIMARY KEY,
+        user_password TEXT NOT NULL,
+        user_password_hash TEXT NOT NULL UNIQUE,
+        admin_code_hash TEXT UNIQUE,
+        assignments_json TEXT NOT NULL,
+        pairs_json TEXT,
+        created_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_admin_code_hash ON {table}(admin_code_hash);
+    """
+    try:
+        _supabase_execute_sql(ddl)
+    except Exception as exc:  # pragma: no cover - network dependent
+        logger.warning("Could not ensure Supabase schema: %s", exc)
+
+
+def _supabase_upsert_session(payload: dict[str, str | None]) -> None:
+    headers = _supabase_headers(
+        write=True,
+        prefer=["resolution=merge-duplicates", "return=minimal"],
+    )
+    headers["Content-Type"] = "application/json"
+    params = {"on_conflict": "user_password_hash"}
+    response = requests.post(
+        _supabase_table_endpoint("sessions"),
+        headers=headers,
+        params=params,
+        json=[payload],
+        timeout=60,
+    )
+    if response.status_code == 404:
+        _ensure_supabase_schema()
+        response = requests.post(
+            _supabase_table_endpoint("sessions"),
+            headers=headers,
+            params=params,
+            json=[payload],
+            timeout=60,
+        )
+    if response.status_code not in (200, 201, 204):
+        raise RuntimeError(f"Supabase upsert failed: {response.status_code} {response.text}")
+
+
+def _supabase_fetch_single(field: str, value: str) -> dict[str, str] | None:
+    params = {
+        "select": "id,user_password,assignments_json,pairs_json,created_at",  # minimal columns
+        field: f"eq.{value}",
+        "limit": "1",
+    }
+    response = requests.get(
+        _supabase_table_endpoint("sessions"),
+        headers=_supabase_headers(include_count=False),
+        params=params,
+        timeout=60,
+    )
+    if response.status_code == 404:
+        # Supabase can take a moment to realise a freshly created table exists.
+        _ensure_supabase_schema()
+        return None
+    if response.status_code not in (200, 206):
+        raise RuntimeError(f"Supabase query failed: {response.status_code} {response.text}")
+    records = response.json()
+    if not records:
+        return None
+    return records[0]
+def init_database() -> None:
+    """Initialisiert die Supabase-Datenbank und legt Tabellen an."""
+    _ensure_supabase_schema()
 
 
 def hash_user_password(password: str) -> str:
@@ -82,66 +163,45 @@ def save_session_to_db(user_password: str, admin_code: str, assignments: list, p
     pairs_json = json.dumps(pairs, ensure_ascii=False)
     user_hash = hash_user_password(user_password)
     admin_hash = hash_admin_code(admin_code)
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
 
-    with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO sessions (user_password, user_password_hash, admin_code_hash, assignments_json, pairs_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_password_hash) DO UPDATE SET
-                user_password = excluded.user_password,
-                admin_code_hash = excluded.admin_code_hash,
-                assignments_json = excluded.assignments_json,
-                pairs_json = excluded.pairs_json,
-                created_at = excluded.created_at
-            """,
-            (user_password, user_hash, admin_hash, assignments_json, pairs_json, timestamp),
-        )
+    payload = {
+        "user_password": user_password,
+        "user_password_hash": user_hash,
+        "admin_code_hash": admin_hash,
+        "assignments_json": assignments_json,
+        "pairs_json": pairs_json,
+        "created_at": timestamp,
+    }
+    _supabase_upsert_session(payload)
 
 
 def load_session_from_db(user_password: str):
     hashed = hash_user_password(user_password)
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT id, user_password, assignments_json, pairs_json FROM sessions WHERE user_password_hash = ?",
-            (hashed,),
-        ).fetchone()
-
-    if not row:
+    record = _supabase_fetch_single("user_password_hash", hashed)
+    if not record:
         return None
 
-    assignments = json.loads(row["assignments_json"])
-    pairs = json.loads(row["pairs_json"]) if row["pairs_json"] else []
-
     return {
-        "id": row["id"],
-        "user_password": row["user_password"],
-        "assignments": assignments,
-        "pairs": pairs,
+        "id": record.get("id"),
+        "user_password": record.get("user_password"),
+        "assignments": json.loads(record["assignments_json"]),
+        "pairs": json.loads(record["pairs_json"]) if record.get("pairs_json") else [],
     }
 
 
 def load_session_from_admin_code(admin_code: str):
     hashed = hash_admin_code(admin_code)
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT id, user_password, assignments_json, pairs_json, created_at FROM sessions WHERE admin_code_hash = ?",
-            (hashed,),
-        ).fetchone()
-
-    if not row:
+    record = _supabase_fetch_single("admin_code_hash", hashed)
+    if not record:
         return None
 
-    assignments = json.loads(row["assignments_json"])
-    pairs = json.loads(row["pairs_json"]) if row["pairs_json"] else []
-
     return {
-        "id": row["id"],
-        "user_password": row["user_password"],
-        "assignments": assignments,
-        "pairs": pairs,
-        "created_at": row["created_at"],
+        "id": record.get("id"),
+        "user_password": record.get("user_password"),
+        "assignments": json.loads(record["assignments_json"]),
+        "pairs": json.loads(record["pairs_json"]) if record.get("pairs_json") else [],
+        "created_at": record.get("created_at"),
     }
 
 
@@ -272,12 +332,12 @@ st.title("🎁 Wichtel-Zuteiler")
 # Sidebar für Modus-Auswahl
 with st.sidebar:
     st.header("Modus")
-    mode = st.radio("Wähle Modus:", ["👤 Teilnehmer", "�️ Session-Admin"], key="mode_select")
+    mode = st.radio("Wähle Modus:", ["👤 Teilnehmer", "🛠️ Session-Admin"], key="mode_select")
     
     st.divider()
-    
-    st.success("✅ Datenbank verbunden")
-    st.caption("💾 Sessions bleiben auch nach Neustart bestehen")
+
+    st.success("✅ Supabase verbunden")
+    st.caption("☁️ Sessions werden in der Cloud gespeichert")
 
 # TEILNEHMER-MODUS
 if mode == "👤 Teilnehmer":
@@ -371,7 +431,7 @@ if mode == "👤 Teilnehmer":
 
 # SESSION-ADMIN-MODUS
 else:
-    st.header("�️ Session-Admin")
+    st.header("🛠️ Session-Admin")
     st.caption("Erstelle neue Runden oder verwalte bestehende Sessions mit deinem individuellen Session-Code.")
 
     st.divider()
@@ -617,4 +677,4 @@ else:
 # Footer
 st.divider()
 st.caption("🔒 **Sicherheit:** User-Passwörter werden gehasht geprüft und stehen dem Admin zur Verwaltung bereit.")
-st.caption("🗄️ **Datenhaltung:** Sessions werden dauerhaft in einer lokalen SQLite-Datenbank gespeichert.")
+st.caption("☁️ **Datenhaltung:** Sessions werden in Supabase (PostgreSQL) gespeichert.")
