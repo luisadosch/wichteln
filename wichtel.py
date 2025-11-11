@@ -13,6 +13,10 @@ st.set_page_config(page_title="Wichtel-Zuteiler", page_icon="🎁", layout="wide
 # Datenbank-Konfiguration
 logger = logging.getLogger(__name__)
 
+SCHEMA_SQL_PATH = "supabase/schema.sql"
+_schema_hint_logged = False
+_supabase_sql_rpc_available = True
+
 def _resolve_supabase_settings():
     schema = os.getenv("SUPABASE_SCHEMA", "public")
     url = os.getenv("SUPABASE_URL")
@@ -76,6 +80,9 @@ def _supabase_execute_sql(query: str) -> None:
 
 
 def _ensure_supabase_schema() -> None:
+    global _schema_hint_logged, _supabase_sql_rpc_available
+    if not _supabase_sql_rpc_available:
+        return
     schema = SUPABASE_SCHEMA or "public"
     table = f"{schema}.sessions"
     ddl = f"""
@@ -92,8 +99,29 @@ def _ensure_supabase_schema() -> None:
     """
     try:
         _supabase_execute_sql(ddl)
+        _schema_hint_logged = False
     except Exception as exc:  # pragma: no cover - network dependent
-        logger.warning("Could not ensure Supabase schema: %s", exc)
+        message = str(exc)
+        if "public.sql" in message or "PGRST202" in message:
+            _supabase_sql_rpc_available = False
+            if not _schema_hint_logged:
+                logger.info(
+                    "Supabase SQL RPC endpoint is not available (function public.sql missing). "
+                    "Manual setup is required; skipping further automatic attempts."
+                )
+                logger.info(
+                    "Execute the statements from `%s` once in the Supabase SQL editor or CLI.",
+                    SCHEMA_SQL_PATH,
+                )
+                _schema_hint_logged = True
+        else:
+            if not _schema_hint_logged:
+                logger.warning("Could not ensure Supabase schema automatically: %s", exc)
+                logger.warning(
+                    "Please execute the SQL statements from `%s` once in the Supabase SQL editor or via the CLI.",
+                    SCHEMA_SQL_PATH,
+                )
+                _schema_hint_logged = True
 
 
 def _supabase_upsert_session(payload: dict[str, str | None]) -> None:
@@ -119,6 +147,11 @@ def _supabase_upsert_session(payload: dict[str, str | None]) -> None:
             json=[payload],
             timeout=60,
         )
+    if response.status_code == 404:
+        raise RuntimeError(
+            "Supabase table 'sessions' is missing. Please run the SQL from "
+            f"`{SCHEMA_SQL_PATH}` on your Supabase project to create it."
+        )
     if response.status_code not in (200, 201, 204):
         raise RuntimeError(f"Supabase upsert failed: {response.status_code} {response.text}")
 
@@ -138,6 +171,7 @@ def _supabase_fetch_single(field: str, value: str) -> dict[str, str] | None:
     if response.status_code == 404:
         # Supabase can take a moment to realise a freshly created table exists.
         _ensure_supabase_schema()
+        return None
         return None
     if response.status_code not in (200, 206):
         raise RuntimeError(f"Supabase query failed: {response.status_code} {response.text}")

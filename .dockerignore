@@ -10,4 +10,3 @@ __pycache__/
 .vscode
 .mypy_cache
 .pytest_cache
-data/wichteln.db
