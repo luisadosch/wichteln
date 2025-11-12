@@ -1,7 +1,19 @@
 # 🎁 Wichtel-Zuteiler
-Eine Streamlit-App zum Auslosen von Wichtelpartnern mit persistenter Speicherung von Sessions in Supabase (Postgres). Die App bietet zwei Modi: Teilnehmende (finden ihren Empfänger anhand eines persönlichen Codes) und Session-Admin (Erstellen/Verwalten von Runden).
+Eine Streamlit-App zum Auslosen von Wichtelpartnern mit persistenter Speicherung von Sessions in Supabase (Postgres). 
+Die App bietet zwei Modi: 
+* Teilnehmende (finden ihren Empfänger anhand eines persönlichen Codes) und
+* * Session-Admin (Erstellen/Verwalten von Runden).
 
 App: https://wichteln.streamlit.app/
+
+## Kurzanleitung zur App
+
+1. Session erstellen (Admin-Modus): Teilnehmende (ein Name pro Zeile) eingeben, optional Paare (die sich nicht gegenseitig beschenken sollen). Zuteilung generieren.
+2. Codes: Die App erzeugt ein gemeinsames User-Passwort (für alle Teilnehmenden) und pro Person einen persönlichen Code. Notiere User-Passwort und Session-Admin-Code.
+3. Session speichern: Nach dem Speichern werden die Daten in Supabase abgelegt. Teilnehmende können mit dem User-Passwort in den Teilnehmer-Modus und ihren Empfänger mit Namen + persönlichem Code anzeigen.
+4. Session verwalten: Mit dem Session-Admin-Code kannst du die gesamte Zuteilung sehen und Empfänger einzeln freigeben.
+
+Viel Spaß beim Wichteln! 🎄
 
 ## Highlights
 
@@ -70,12 +82,6 @@ streamlit run wichtel.py
 
 Öffne anschließend http://localhost:8501
 
-## Kurzanleitung zur App
-
-1. Session erstellen (Admin-Modus): Teilnehmende (ein Name pro Zeile) eingeben, optional Paare (die sich nicht gegenseitig beschenken sollen). Zuteilung generieren.
-2. Codes: Die App erzeugt ein gemeinsames User-Passwort (für alle Teilnehmenden) und pro Person einen persönlichen Code. Notiere User-Passwort und Session-Admin-Code.
-3. Session speichern: Nach dem Speichern werden die Daten in Supabase abgelegt. Teilnehmende können mit dem User-Passwort in den Teilnehmer-Modus und ihren Empfänger mit Namen + persönlichem Code anzeigen.
-4. Session verwalten: Mit dem Session-Admin-Code kannst du die gesamte Zuteilung sehen und Empfänger einzeln freigeben.
 
 ## Docker
 
@@ -101,7 +107,7 @@ pytest -q
 
 ## Sicherheitshinweise
 
-- SUPABASE_SERVICE_ROLE_KEY ist mächtig (Service Role) und sollte sicher verwahrt werden. In Produktionssetups empfehle ich, nur minimal nötige Keys zu verwenden und Zugriffsrechte richtig zu setzen.
+- SUPABASE_SERVICE_ROLE_KEY (Service Role) sollte sicher verwahrt werden. In Produktionssetups empfehle ich, nur minimal nötige Keys zu verwenden und Zugriffsrechte richtig zu setzen.
 - Teile den Session-Admin-Code nur mit Personen, die die komplette Zuteilung sehen dürfen.
 - Die App hasht Passwörter (SHA-256) für Vergleiche; wenn du stärkere Sicherheitsanforderungen hast, erwäge salting oder ein bewährtes Auth-System.
 
@@ -109,11 +115,5 @@ pytest -q
 
 - Code unter `wichtel.py` ist die Haupt-App (Streamlit).
 - Tests unter `tests/`.
-- Vorschläge, Bug-Reports oder PRs sind willkommen.
 
-## Kontakt
-
-Wenn du Hilfe bei Deployment oder Supabase-Einrichtung brauchst, öffne bitte ein Issue oder kontaktiere die Projektverantwortlichen.
-
-Viel Spaß beim Wichteln! 🎄
 ```
