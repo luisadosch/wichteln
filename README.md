@@ -116,4 +116,3 @@ pytest -q
 - Code unter `wichtel.py` ist die Haupt-App (Streamlit).
 - Tests unter `tests/`.
 
-```
